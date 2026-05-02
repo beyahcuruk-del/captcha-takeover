@@ -16,7 +16,7 @@ FAIL_COUNT=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/scripts/env.sh"
 
-printf "${BOLD}=== Hermes Takeover Doctor ===${NC}\n\n"
+printf "${BOLD}=== Captcha Takeover Doctor ===${NC}\n\n"
 
 # 1. env.sh
 printf "${BOLD}[1] Konfigurasi${NC}\n"
@@ -72,20 +72,30 @@ echo
 # 4. Ports
 printf "${BOLD}[4] Port usage${NC}\n"
 check_port() {
-  local port="$1" label="$2"
-  local listener
+  local port="$1" label="$2" pidfile="$3"
+  local listener owner
   # Match column 4 ending with ":<port>" (handles "127.0.0.1:5902" and "[::]:5902")
-  listener="$(ss -tln 2>/dev/null | awk -v p=":${port}\$" '$4 ~ p {print $4; exit}')"
-  if [[ -n "$listener" ]]; then
-    ok "$label (port $port) LISTENING di $listener"
-  else
+  listener="$(ss -tlnp 2>/dev/null | awk -v p=":${port}\$" '$4 ~ p {print $0; exit}')"
+  if [[ -z "$listener" ]]; then
     warn "$label (port $port) belum listening — kalau udah ./start.sh, mungkin component fail; cek log."
+    return
+  fi
+  # Cek apakah pemegang port adalah proses kita (PID match dengan PID file)
+  owner="$(echo "$listener" | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -1)"
+  local our_pid=""
+  [[ -n "$pidfile" && -f "$pidfile" ]] && our_pid="$(cat "$pidfile" 2>/dev/null)"
+  if [[ -n "$our_pid" && "$owner" == "$our_pid" ]]; then
+    ok "$label (port $port) LISTENING (process kita, PID $owner)"
+  elif [[ -z "$our_pid" ]]; then
+    fail "$label (port $port) udah dipake proses lain (PID $owner)! Stack belum start tapi port udah occupied. Edit ${label}_PORT di scripts/env.sh ke port lain, atau matiin proses yg occupy."
+  else
+    fail "$label (port $port) DIPAKE proses lain (PID $owner), bukan kita (PID $our_pid). Restart stack atau ganti port."
   fi
 }
 
-check_port "$VNC_PORT" "VNC"
-check_port "$NOVNC_PORT" "noVNC"
-check_port "$CHROME_CDP_PORT" "Chrome CDP"
+check_port "$VNC_PORT" "VNC" "$PID_DIR/x11vnc.pid"
+check_port "$NOVNC_PORT" "noVNC" "$PID_DIR/websockify.pid"
+check_port "$CHROME_CDP_PORT" "Chrome CDP" "$PID_DIR/chrome.pid"
 echo
 
 # 5. Components running
