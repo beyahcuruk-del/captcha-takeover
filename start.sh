@@ -7,6 +7,8 @@
 #   3. Google Chrome with remote debugging on $CHROME_CDP_PORT
 #   4. x11vnc capturing $DISPLAY_NUM, listening on $VNC_PORT
 #   5. websockify (noVNC) on $NOVNC_PORT bridging to VNC
+#   6. watchdog (auto-restart Chrome on crash) — disable dgn START_WATCHDOG=0
+#   7. (opsional) cloudflared quick tunnel — enable dgn TUNNEL_MODE=cloudflared
 
 set -euo pipefail
 
@@ -111,6 +113,44 @@ start_bg "websockify" \
     --web="$NOVNC_WEB" \
     "$BIND_ADDR:$NOVNC_PORT" \
     "127.0.0.1:$VNC_PORT"
+
+# 6) Watchdog (auto-restart Chrome kalau crash). Optional — disable dgn START_WATCHDOG=0
+if [[ "${START_WATCHDOG:-1}" != "0" ]]; then
+  start_bg "watchdog" \
+    bash "$SCRIPT_DIR/scripts/watchdog.sh"
+fi
+
+# 7) Optional tunnel mode (cloudflared quick tunnel — publik trycloudflare.com)
+# Enable via TUNNEL_MODE=cloudflared di env.sh atau saat invocation:
+#   TUNNEL_MODE=cloudflared ./start.sh
+: > "$RUN_DIR/tunnel-url.txt" 2>/dev/null || true
+case "${TUNNEL_MODE:-}" in
+  cloudflared)
+    if ! command -v cloudflared >/dev/null 2>&1; then
+      warn "TUNNEL_MODE=cloudflared tapi cloudflared belum terinstall — skip. Install dgn ./install.sh atau lihat https://github.com/cloudflare/cloudflared/releases"
+    else
+      start_bg "cloudflared" \
+        bash "$SCRIPT_DIR/scripts/tunnel-cloudflared.sh"
+      # Tunggu URL muncul di file (max 20 detik)
+      log "Nunggu cloudflared assign URL (max 20s)..."
+      for _ in $(seq 1 40); do
+        if [[ -s "$RUN_DIR/tunnel-url.txt" ]]; then break; fi
+        sleep 0.5
+      done
+      if [[ -s "$RUN_DIR/tunnel-url.txt" ]]; then
+        log "Tunnel URL: $(cat "$RUN_DIR/tunnel-url.txt")"
+      else
+        warn "Cloudflared belum assign URL setelah 20s — cek $LOG_DIR/cloudflared.log"
+      fi
+    fi
+    ;;
+  ""|none|localhost)
+    : # no tunnel — default
+    ;;
+  *)
+    warn "TUNNEL_MODE=$TUNNEL_MODE tidak dikenali. Pilihan: '' (default) atau 'cloudflared'."
+    ;;
+esac
 
 # Info akhir — delegasiin ke info.sh biar konsisten
 exec "$SCRIPT_DIR/info.sh"

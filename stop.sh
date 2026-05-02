@@ -11,20 +11,23 @@ ENV_FILE="$SCRIPT_DIR/scripts/env.sh"
 # shellcheck disable=SC1090
 . "$ENV_FILE"
 
-# Stop dalam urutan terbalik dari start
-for name in websockify x11vnc chrome fluxbox xvfb; do
+# Stop dalam urutan terbalik dari start. Watchdog dulu biar gak ke-trigger
+# restart-on-Chrome-down pas kita lagi kill Chrome.
+for name in cloudflared watchdog websockify x11vnc chrome fluxbox xvfb; do
   pidfile="$PID_DIR/$name.pid"
   if [[ -f "$pidfile" ]]; then
     pid="$(cat "$pidfile" 2>/dev/null || true)"
     if [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null; then
       log "Stopping $name (PID $pid)..."
-      kill "$pid" 2>/dev/null || true
+      # Karena start_bg pake setsid, process group ID = PID. Kill -PGID supaya
+      # children (mis. cloudflared yg di-spawn dari wrapper bash) ikut kebunuh.
+      kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
       # Tunggu graceful shutdown 3 detik
       for _ in 1 2 3 4 5 6; do
         kill -0 "$pid" 2>/dev/null || break
         sleep 0.5
       done
-      kill -9 "$pid" 2>/dev/null || true
+      kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
     else
       printf "${YELLOW}[stop]${NC} %s tidak running.\n" "$name"
     fi

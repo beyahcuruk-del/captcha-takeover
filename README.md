@@ -1,40 +1,57 @@
-# Hermes Captcha Takeover Stack
+# Captcha Takeover Skill
 
-Setup biar lu bisa **takeover captcha dari HP** padahal Hermes Agent jalan di
-VPS Ubuntu. Pas captcha muncul, Hermes biasanya stuck — lu tinggal buka URL di
-Chrome HP, klik captcha, agent lanjut.
+Setup biar lu bisa **takeover captcha dari HP** padahal agent (Hermes,
+Playwright, Puppeteer, Selenium, dll) jalan di VPS Ubuntu. Pas captcha muncul,
+agent biasanya stuck — lu tinggal buka URL di Chrome HP, klik captcha, agent
+lanjut.
 
-## Quick Test (5 menit di VPS)
+> English version: see [README.en.md](./README.en.md). Agent integration
+> playbook: see [SKILL.md](./SKILL.md).
+
+## Quick Test (3 menit di VPS — pake cloudflared, tanpa Tailscale)
 
 ```bash
-# 1. Upload + unzip
-unzip hermes-takeover.zip && cd hermes-takeover
-
-# 2. Install semua deps (Xvfb, Chrome, Tailscale, dll)
+# 1. Clone + install
+git clone https://github.com/beyahcuruk-del/captcha-takeover.git
+cd captcha-takeover
 chmod +x *.sh scripts/*.sh
 ./install.sh
 
-# 3. Login Tailscale (sekali aja, buka URL yang muncul di HP/laptop)
-sudo tailscale up
-# Install app "Tailscale" di HP, login akun Google yg sama, aktifin
+# 2. Start stack dgn cloudflared quick tunnel — dapet URL publik HTTPS instant
+TUNNEL_MODE=cloudflared ./start.sh
 
-# 4. Start stack — output langsung kasih URL noVNC + Hermes connect command
-./start.sh
+# 3. Output kasih URL kayak gini → buka di Chrome HP:
+#    https://<random>.trycloudflare.com/vnc.html?autoconnect=1&resize=remote&password=...
 
-# 5. Buka URL noVNC dari output di atas, di Chrome HP
-
-# 6. Connect Hermes ke Chrome (di terminal Hermes):
+# 4. Connect Hermes ke Chrome (di terminal Hermes):
 hermes chat
 # di prompt:  /browser connect ws://127.0.0.1:9222
 ```
 
-Selesai. Pas captcha muncul → buka URL noVNC di HP → klik captcha pake jari → agent lanjut.
+Selesai. Pas captcha muncul → buka URL `trycloudflare.com` di HP → klik captcha pake jari → agent lanjut.
+
+## Pilihan tunnel (cara HP lu nyampe ke noVNC)
+
+Default-nya noVNC bind ke `127.0.0.1:6080` (cuma localhost VPS). Buat akses
+dari HP, pilih salah satu:
+
+| Mode | Cara start | URL yg muncul | Privat? |
+|------|------------|----------------|---------|
+| **Cloudflared quick tunnel** ⚡ paling cepet | `TUNNEL_MODE=cloudflared ./start.sh` | `https://<random>.trycloudflare.com/...` | **Publik** — siapa aja yg punya URL bisa akses; password VNC = auth. Auto-rotate tiap restart. Gak perlu account. |
+| **Tailscale** 🔒 paling aman | `sudo tailscale up` (sekali) + install app di HP, lalu `./start.sh` | `http://100.x.y.z:6080/...` | **Privat VPN** — cuma device lu. |
+| **SSH local-forward** | `ssh -L 6080:127.0.0.1:6080 user@vps`, buka `http://127.0.0.1:6080/...` di laptop | localhost laptop | Privat tapi cuma works dari laptop, gak dari HP via LTE |
+| Tanpa tunnel | `./start.sh` doang | `http://127.0.0.1:6080/...` | Cuma kalo lu pake VPS-nya langsung |
+
+Rekomendasi:
+- **Mau cepet, sekali pake** → cloudflared quick tunnel
+- **Pemakaian rutin** → Tailscale (lebih aman, setup awal 2 menit, abis itu auto)
 
 **Helper scripts:**
 - `./doctor.sh` — diagnose dependency / port / health issue
-- `./hermes-info.sh` — re-print URL noVNC + command Hermes
+- `./info.sh` — re-print URL noVNC + connect command (`--json` untuk machine-readable output)
 - `./status.sh` — cek semua komponen UP/OFF
 - `./stop.sh` / `./start.sh` — restart cycle
+- `./new-instance.sh <nama> <port-offset>` — bikin instance baru buat agent kedua/ketiga
 
 ## Cara kerja
 
@@ -146,7 +163,42 @@ liat live di HP**.
 3. Pakai jari, klik checkbox / solve captcha kayak biasa
 4. Begitu captcha kelar, Hermes auto lanjut karena dia connect ke Chrome yang sama
 
-## (Opsional) Notif Telegram saat captcha muncul
+## (Opsional) Notif kalau captcha muncul
+
+Watcher bisa kirim ke **Telegram, ntfy.sh, Discord, Slack, atau email** —
+semua optional, set yg mau dipake aja di `scripts/env.sh`.
+
+### ntfy.sh — paling simple, gak perlu bot/token
+
+1. Install app **ntfy** di HP (Play Store / App Store)
+2. Subscribe ke topic random unik (misal `hermes-beyah-x9k3pm`)
+3. Edit `scripts/env.sh`: `export NTFY_TOPIC="hermes-beyah-x9k3pm"`
+
+### Discord
+
+1. Server Settings → Integrations → Webhooks → New Webhook
+2. Copy webhook URL
+3. Edit `scripts/env.sh`: `export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."`
+
+### Slack
+
+1. Bikin Incoming Webhook di workspace Slack lu
+2. Edit `scripts/env.sh`: `export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."`
+
+### Email (SMTP)
+
+Buat Gmail: bikin App Password di https://myaccount.google.com/apppasswords lalu
+edit `scripts/env.sh`:
+
+```bash
+export SMTP_HOST="smtp.gmail.com"
+export SMTP_PORT="587"
+export SMTP_USER="lu@gmail.com"
+export SMTP_PASS="<app-password>"
+export SMTP_TO="lu@gmail.com"
+```
+
+### Telegram
 
 ### 1. Bikin bot
 

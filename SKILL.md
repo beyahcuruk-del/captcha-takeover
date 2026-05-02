@@ -60,19 +60,35 @@ to the user via noVNC over Tailscale.
 git clone https://github.com/beyahcuruk-del/captcha-takeover.git
 cd captcha-takeover
 chmod +x *.sh scripts/*.sh
-./install.sh                  # installs Xvfb, Chrome, x11vnc, noVNC, Tailscale, Python deps
-sudo tailscale up             # one-time login on this machine
-# Install Tailscale app on phone, sign in with the same account.
+./install.sh                  # installs Xvfb, Chrome, x11vnc, noVNC, Tailscale, cloudflared, Python deps
 ```
+
+## Tunnel options — how the user reaches noVNC from their phone
+
+noVNC binds to `127.0.0.1:6080` by default (only reachable from the VPS itself).
+To let the user open it from their phone you need a tunnel. Pick one:
+
+| Mode | Setup | URL the user gets | Privacy |
+|------|-------|-------------------|---------|
+| **Cloudflared quick tunnel** — recommended for fast setup | `TUNNEL_MODE=cloudflared ./start.sh` | `https://<random>.trycloudflare.com/...` | **Public** — anyone with the URL can connect (VNC password is the only auth). Auto-rotates each restart. No account, no domain, no login. |
+| **Tailscale** — recommended for long-term private use | `sudo tailscale up` once, install Tailscale app on phone with same account, then `./start.sh` | `http://100.x.y.z:6080/...` | **Private VPN** — only your own devices can reach it. |
+| **SSH local-forward** | `ssh -L 6080:127.0.0.1:6080 user@vps`, then open `http://127.0.0.1:6080/...` on the laptop | localhost on laptop | **Private**, but laptop-only (phone won't work over LTE). |
+| None | `./start.sh` (default, no flag) | `http://127.0.0.1:6080/...` | Local-only, only useful when agent + viewer share the same machine. |
 
 ## Start (per session)
 
 ```bash
+# Default — no public tunnel; uses Tailscale auto-detect if logged in:
 ./start.sh
+
+# OR with cloudflared quick tunnel (instant public HTTPS URL):
+TUNNEL_MODE=cloudflared ./start.sh
 ```
 
 Output prints the **noVNC URL with embedded password** + the **CDP URL** the
-agent should connect to.
+agent should connect to. If `TUNNEL_MODE=cloudflared`, an additional public
+`https://<random>.trycloudflare.com/vnc.html?...` URL is printed and written to
+`~/.hermes-takeover/tunnel-url.txt` and `info.json` (`tunnel_novnc_url`).
 
 ## Stop / status / diagnose
 
@@ -103,28 +119,26 @@ See `examples/` for full code per framework.
 
 **Step 2 — Detect CAPTCHA.**
 
-Run the bundled detector inside any page after navigation:
+Load and run the bundled detector inside any page after navigation:
 
 ```js
-// scripts/detect-captcha.js — drop into your evaluate() call
-(() => {
-  const sels = [
-    'iframe[src*="recaptcha"]',
-    'iframe[src*="hcaptcha"]',
-    'div[class*="cf-turnstile"]',
-    'div.g-recaptcha',
-    'div.h-captcha',
-    '#challenge-form',                 // Cloudflare interstitial
-    'iframe[title*="captcha" i]',
-    'iframe[title*="challenge" i]',
-  ];
-  for (const s of sels) if (document.querySelector(s)) return s;
-  return null;
-})();
+// Read scripts/detect-captcha.js as a string, then in your framework:
+//   Playwright: await page.evaluate(detectJsString)
+//   Puppeteer:  await page.evaluate(detectJsString)
+//   Selenium:   driver.execute_script("return " + detectJsString)
+//   Raw CDP:    {"method":"Runtime.evaluate", "params":{"expression": detectJsString, "returnByValue": true}}
 ```
 
-If it returns a non-empty string, you have a CAPTCHA. The exact same logic
-runs in `scripts/captcha-watcher.py` if you want background polling instead.
+It returns `"<vendor>:<selector>"` when a CAPTCHA is on screen, `null`
+otherwise. Vendors covered: **reCAPTCHA, hCaptcha, Cloudflare Turnstile +
+interstitial, Arkose / FunCaptcha, GeeTest, DataDome, PerimeterX / HUMAN,
+Akamai Bot Manager, Imperva (Incapsula), Kasada, AWS WAF, Lemin**, plus a
+generic iframe fallback and a text-heuristic for "Verify you are human" /
+"Just a moment…" pages. Add new selectors to the bottom of the file when you
+find a vendor it misses.
+
+The exact same detector runs in `scripts/captcha-watcher.py` if you want
+background polling instead.
 
 **Step 3 — Hand control to the user.**
 
@@ -136,8 +150,10 @@ When CAPTCHA is detected, your agent should:
    ```bash
    ./info.sh --json
    ```
-   or read `~/.hermes-takeover/info.json` (keys: `novnc_url`, `vnc_password`,
-   `cdp_url`, `tailscale_ip`).
+   or read `~/.hermes-takeover/info.json`. Use this priority order:
+   1. `tunnel_novnc_url` if non-empty (cloudflared public HTTPS URL — works
+      from any device, anywhere).
+   2. Otherwise `novnc_url` (Tailscale or localhost, depending on `BIND_ADDR`).
 3. **Tell the user** with a message like:
    ```
    I hit a CAPTCHA on <PAGE_URL>. Open this from your phone and solve it for
@@ -164,9 +180,19 @@ watch Chrome), enable the watcher:
 ./watch-captcha.sh start    # background process, polls Chrome every 5 s
 ```
 
-It writes every detection to `~/.hermes-takeover/logs/captcha-events.log` and,
-if `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` are set in `scripts/env.sh`,
-sends a screenshot + the takeover URL to the user's Telegram.
+It writes every detection to `~/.hermes-takeover/logs/captcha-events.log` and
+fans out to whichever channels are configured in `scripts/env.sh`:
+
+| Channel | Variables to set |
+|---------|------------------|
+| Telegram | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` |
+| ntfy.sh | `NTFY_TOPIC` (and optionally `NTFY_SERVER`, `NTFY_TOKEN`) |
+| Discord | `DISCORD_WEBHOOK_URL` |
+| Slack | `SLACK_WEBHOOK_URL` |
+| Email (SMTP) | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `SMTP_TO` |
+
+Multiple channels can be set at once; all of them get the same notification.
+If none are set, events still go to the local log file.
 
 ## Limitations
 
@@ -174,13 +200,23 @@ sends a screenshot + the takeover URL to the user's Telegram.
   has to actually solve it.
 - Chrome runs headed under Xvfb — no GPU, so heavily-animated sites may feel
   slow over mobile networks.
-- Default bind is `auto` (Tailscale IP if up, else 127.0.0.1). Avoid
-  `0.0.0.0` unless you need public exposure (use Cloudflare Tunnel + Access
-  for that — out of scope for this skill).
-- One Chrome instance per machine. To run multiple agents on the same VPS,
-  duplicate the install dir with a different `RUN_DIR` and ports in `env.sh`.
+- Default bind is `auto` (Tailscale IP if up, else 127.0.0.1). For public
+  access prefer `TUNNEL_MODE=cloudflared` over manually setting
+  `BIND_ADDR=0.0.0.0`; cloudflared adds HTTPS for free and avoids exposing the
+  raw port.
+- Cloudflared quick tunnels are public + anonymous — the VNC password is the
+  only auth boundary. The password is auto-generated at install time and
+  stored in `~/.hermes-takeover/vncpasswd.txt`; rotate it (and re-run
+  install/start) if it leaks. URLs rotate each restart; no uptime SLA from
+  Cloudflare for the free quick-tunnel mode.
+- One Chrome instance per install dir. Use `./new-instance.sh <name> <port-offset>`
+  to spawn additional isolated instances (each gets its own `RUN_DIR`,
+  Chrome profile, X display, and port set).
+- A built-in watchdog auto-restarts Chrome if it crashes mid-session.
+  Disable with `START_WATCHDOG=0 ./start.sh`.
 
 ## See also
 
-- `README.md` — human-facing setup walkthrough (Indonesian).
+- `README.md` — human-facing setup walkthrough (Bahasa Indonesia).
+- `README.en.md` — same walkthrough in English.
 - `examples/` — copy-paste integration code for each framework.

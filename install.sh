@@ -80,6 +80,24 @@ fi
 
 # Catatan: tailscale up dilakukan di step terpisah (interaktif) — jangan auto-up di sini.
 
+# ---------- cloudflared (untuk TUNNEL_MODE=cloudflared) ----------
+# Optional: kalau lu mau pake cloudflared quick tunnel sebagai alternative ke Tailscale.
+# Skip kalau lu udah pake Tailscale dan gak butuh ini.
+if command -v cloudflared >/dev/null 2>&1; then
+  log "cloudflared sudah terinstall: $(cloudflared --version 2>&1 | head -1)"
+else
+  log "Install cloudflared (quick tunnel — alternative Tailscale, no account needed)..."
+  TMP_BIN="$(mktemp)"
+  if wget -q -O "$TMP_BIN" "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"; then
+    chmod +x "$TMP_BIN"
+    sudo mv "$TMP_BIN" /usr/local/bin/cloudflared
+    log "cloudflared terinstall: $(cloudflared --version 2>&1 | head -1)"
+  else
+    rm -f "$TMP_BIN"
+    log "WARN: cloudflared download gagal — skip. Lu masih bisa pake Tailscale."
+  fi
+fi
+
 # ---------- Direktori kerja ----------
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_DIR="$HOME/.hermes-takeover"
