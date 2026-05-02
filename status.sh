@@ -20,7 +20,7 @@ if [[ "${BIND_ADDR:-auto}" == "auto" ]]; then
 fi
 
 echo "=== Captcha Takeover Status ==="
-for name in xvfb fluxbox chrome x11vnc websockify; do
+for name in xvfb fluxbox chrome x11vnc websockify watchdog; do
   pidfile="$PID_DIR/$name.pid"
   if [[ -f "$pidfile" ]]; then
     pid="$(cat "$pidfile")"

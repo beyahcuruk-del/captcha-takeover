@@ -112,5 +112,11 @@ start_bg "websockify" \
     "$BIND_ADDR:$NOVNC_PORT" \
     "127.0.0.1:$VNC_PORT"
 
+# 6) Watchdog (auto-restart Chrome kalau crash). Optional — disable dgn START_WATCHDOG=0
+if [[ "${START_WATCHDOG:-1}" != "0" ]]; then
+  start_bg "watchdog" \
+    bash "$SCRIPT_DIR/scripts/watchdog.sh"
+fi
+
 # Info akhir — delegasiin ke info.sh biar konsisten
 exec "$SCRIPT_DIR/info.sh"

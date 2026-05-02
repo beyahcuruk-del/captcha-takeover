@@ -39,6 +39,34 @@ export CHROME_FLAGS=(
   --no-sandbox  # sering dibutuhkan di VPS yang gak punya user namespaces; aman karena display terisolasi
 )
 
-# Telegram (opsional — kosongkan kalau gak pake)
+# =====================================================================
+# Notification channels (semua opsional — kosongkan kalau gak pake)
+# Watcher kirim notif ke SEMUA channel yg di-set. Kalau gak ada satupun
+# yg di-set, event tetep di-log ke ~/.hermes-takeover/logs/captcha-events.log
+# =====================================================================
+
+# Telegram bot (lihat README untuk cara bikin token + chat ID)
 export TELEGRAM_BOT_TOKEN=""
 export TELEGRAM_CHAT_ID=""
+
+# ntfy.sh — push notif paling simple (gak perlu bot/token).
+#   1. Install app "ntfy" di HP, subscribe ke topic random unik
+#   2. Set NTFY_TOPIC ke nama topic itu
+#   3. (opsional) NTFY_SERVER kalau pake self-hosted ntfy
+export NTFY_TOPIC=""
+export NTFY_SERVER="https://ntfy.sh"
+export NTFY_TOKEN=""
+
+# Discord — bikin webhook di Server Settings → Integrations → Webhooks
+export DISCORD_WEBHOOK_URL=""
+
+# Slack — bikin Incoming Webhook di Slack workspace
+export SLACK_WEBHOOK_URL=""
+
+# Email (SMTP) — pake Gmail App Password / SMTP relay lainnya
+export SMTP_HOST=""           # contoh: smtp.gmail.com
+export SMTP_PORT="587"
+export SMTP_USER=""
+export SMTP_PASS=""
+export SMTP_FROM=""           # default: SMTP_USER
+export SMTP_TO=""             # comma-separated kalau multiple, misal "a@x.com,b@y.com"

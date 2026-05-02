@@ -1,14 +1,28 @@
 #!/usr/bin/env python3
-"""captcha-watcher.py — Detect captcha di Chrome (via CDP) lalu kirim notif Telegram.
+"""captcha-watcher.py — Detect captcha di Chrome (via CDP) lalu kirim notif.
 
 Pemakaian:
     python3 scripts/captcha-watcher.py
 
-Konfigurasi: scripts/env.sh (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID).
+Konfigurasi: scripts/env.sh.
+
+Notification channels (semua optional, set environment variable / env.sh):
+    Telegram:  TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+    ntfy.sh:   NTFY_TOPIC                (e.g. "myhermes-x9k3pm")
+               NTFY_SERVER               (default https://ntfy.sh)
+               NTFY_TOKEN                (optional bearer token)
+    Discord:   DISCORD_WEBHOOK_URL       (full webhook URL)
+    Slack:     SLACK_WEBHOOK_URL         (full incoming-webhook URL)
+    Email:     SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS,
+               SMTP_FROM, SMTP_TO        (comma-separated for multiple)
+
+Yang gak di-set bakal di-skip. Kalau gak ada satupun yg di-set, event tetep
+ditulis ke ~/.hermes-takeover/logs/captcha-events.log + screenshot.
+
 Stop: Ctrl+C atau kirim SIGTERM.
 
-Dependency: python3, python3-websockets (apt), python3-requests (apt). Install
-otomatis lewat install.sh.
+Dependency: python3, python3-websockets, python3-requests. Install otomatis
+lewat install.sh.
 """
 
 from __future__ import annotations
@@ -18,9 +32,11 @@ import json
 import os
 import re
 import signal
+import smtplib
 import subprocess
 import sys
 import time
+from email.message import EmailMessage
 from pathlib import Path
 
 try:
@@ -34,6 +50,7 @@ except ImportError as e:
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ENV_FILE = SCRIPT_DIR / "env.sh"
+DETECT_JS_FILE = SCRIPT_DIR / "detect-captcha.js"
 
 
 _VAR_RE = re.compile(r"\$\{?(\w+)\}?")
@@ -72,10 +89,16 @@ def _parse_env(path: Path) -> dict[str, str]:
         # Skip array/multiline lines (mulai dgn '(' )
         if v.startswith("("):
             continue
-        # Strip kutip atau komentar trailing
-        if len(v) >= 2 and v[0] in ("'", '"') and v[-1] == v[0]:
-            v = v[1:-1]
+        # Kalau dimulai dgn quote, ambil sampai matching quote (handle inline comment).
+        if v and v[0] in ("'", '"'):
+            quote = v[0]
+            end = v.find(quote, 1)
+            if end >= 0:
+                v = v[1:end]
+            else:
+                v = v[1:]  # unterminated; ambil sisanya
         else:
+            # Strip inline comment & whitespace.
             v = v.split("#", 1)[0].strip()
         # Expand variabel sebelum simpan
         out[k.strip()] = _expand(v, out)
@@ -86,41 +109,32 @@ ENV = _parse_env(ENV_FILE)
 # Override sama OS env (kalau user export manual)
 ENV.update({k: v for k, v in os.environ.items() if k in ENV})
 
-CDP_PORT = int(ENV.get("CHROME_CDP_PORT", "9222"))
-NOVNC_PORT = int(ENV.get("NOVNC_PORT", "6080"))
-DISPLAY_NUM = ENV.get("DISPLAY_NUM", ":1")
-RUN_DIR = Path(ENV.get("RUN_DIR", str(Path.home() / ".hermes-takeover")))
-LOG_DIR = Path(ENV.get("LOG_DIR", str(RUN_DIR / "logs")))
+
+def cfg(key: str, default: str = "") -> str:
+    """Get config value from env.sh, OS env taking precedence."""
+    return os.environ.get(key, ENV.get(key, default))
+
+
+CDP_PORT = int(cfg("CHROME_CDP_PORT", "9222"))
+NOVNC_PORT = int(cfg("NOVNC_PORT", "6080"))
+DISPLAY_NUM = cfg("DISPLAY_NUM", ":1")
+RUN_DIR = Path(cfg("RUN_DIR", str(Path.home() / ".hermes-takeover")))
+LOG_DIR = Path(cfg("LOG_DIR", str(RUN_DIR / "logs")))
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "5"))
 COOLDOWN = float(os.environ.get("COOLDOWN", "120"))
 
-TG_TOKEN = ENV.get("TELEGRAM_BOT_TOKEN", "")
-TG_CHAT = ENV.get("TELEGRAM_CHAT_ID", "")
-
-# JS detection — dijalanin di tiap tab Chrome
-DETECT_JS = r"""(() => {
-  const selectors = [
-    'iframe[src*="recaptcha"]',
-    'iframe[src*="hcaptcha"]',
-    'iframe[src*="challenges.cloudflare.com"]',
-    'div.g-recaptcha',
-    'div.h-captcha',
-    'div[class*="cf-turnstile"]',
-    '#challenge-form',
-    '#cf-challenge-running',
-  ];
-  for (const sel of selectors) {
-    const el = document.querySelector(sel);
-    if (el) {
-      const r = el.getBoundingClientRect();
-      // Hanya hitung kalau visible (size > 0)
-      if (r.width > 0 && r.height > 0) return sel;
-    }
-  }
-  return '';
-})()"""
+# Detection JS — load dari file (single source of truth, sama yg dipake agent)
+if DETECT_JS_FILE.is_file():
+    DETECT_JS = DETECT_JS_FILE.read_text()
+else:
+    # Fallback minimal kalau file gak ada (shouldn't happen pasca install)
+    DETECT_JS = (
+        "(() => {const sels=['iframe[src*=\"recaptcha\"]','iframe[src*=\"hcaptcha\"]',"
+        "'div[class*=\"cf-turnstile\"]'];for(const s of sels)if(document.querySelector(s))"
+        "return 'fallback:'+s;return null;})()"
+    )
 
 
 def log(msg: str) -> None:
@@ -138,6 +152,21 @@ def get_tailscale_ip() -> str:
         return out.stdout.strip().splitlines()[0] if out.stdout.strip() else ""
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return ""
+
+
+def get_takeover_url() -> str:
+    """URL noVNC yg bisa dipake user. Prefer Tailscale IP, fallback ke info.json."""
+    info_path = RUN_DIR / "info.json"
+    if info_path.is_file():
+        try:
+            data = json.loads(info_path.read_text())
+            if data.get("novnc_url"):
+                return data["novnc_url"]
+        except (json.JSONDecodeError, OSError):
+            pass
+    ts = get_tailscale_ip()
+    host = ts or "127.0.0.1"
+    return f"http://{host}:{NOVNC_PORT}/vnc.html?autoconnect=1&resize=remote"
 
 
 def take_screenshot() -> Path | None:
@@ -158,11 +187,13 @@ def take_screenshot() -> Path | None:
     return None
 
 
+# -- notification dispatcher ------------------------------------------------
+
 EVENT_LOG = LOG_DIR / "captcha-events.log"
 
 
 def append_event(message: str, screenshot: Path | None) -> None:
-    """Tulis event ke log file biar tetep bisa di-tail walau tanpa Telegram."""
+    """Tulis event ke log file biar tetep bisa di-tail walau tanpa notif channel."""
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{ts}] {message.replace(chr(10), ' | ')}"
     if screenshot:
@@ -175,40 +206,178 @@ def append_event(message: str, screenshot: Path | None) -> None:
         log(f"Gagal tulis event log: {e}")
 
 
-def send_telegram(message: str, screenshot: Path | None) -> None:
-    # Selalu append ke event log dulu (independent dari Telegram).
-    append_event(message, screenshot)
-    if not TG_TOKEN or not TG_CHAT:
-        log("Telegram belum di-set — event ditulis ke " + str(EVENT_LOG))
-        return
-    api = f"https://api.telegram.org/bot{TG_TOKEN}"
+def notify_telegram(message: str, screenshot: Path | None) -> bool:
+    token = cfg("TELEGRAM_BOT_TOKEN")
+    chat = cfg("TELEGRAM_CHAT_ID")
+    if not token or not chat:
+        return False
+    api = f"https://api.telegram.org/bot{token}"
     try:
         if screenshot and screenshot.is_file():
             with screenshot.open("rb") as f:
                 r = requests.post(
                     f"{api}/sendPhoto",
-                    data={"chat_id": TG_CHAT, "caption": message},
+                    data={"chat_id": chat, "caption": message},
                     files={"photo": f},
                     timeout=15,
                 )
         else:
             r = requests.post(
                 f"{api}/sendMessage",
-                data={
-                    "chat_id": TG_CHAT,
-                    "text": message,
-                    "disable_web_page_preview": "true",
-                },
+                data={"chat_id": chat, "text": message, "disable_web_page_preview": "true"},
                 timeout=15,
             )
         r.raise_for_status()
         log("Notif Telegram terkirim.")
+        return True
     except requests.RequestException as e:
-        log(f"Gagal kirim Telegram: {e}")
+        log(f"Telegram gagal: {e}")
+        return False
+
+
+def notify_ntfy(message: str, screenshot: Path | None) -> bool:
+    topic = cfg("NTFY_TOPIC")
+    if not topic:
+        return False
+    server = cfg("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
+    token = cfg("NTFY_TOKEN")
+    headers = {"Title": "Captcha Takeover", "Priority": "high", "Tags": "warning"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        # Kirim text dulu (URL ada di message body)
+        r = requests.post(
+            f"{server}/{topic}",
+            data=message.encode("utf-8"),
+            headers=headers,
+            timeout=10,
+        )
+        r.raise_for_status()
+        # Attach screenshot kalau ada (ntfy support file attachments)
+        if screenshot and screenshot.is_file():
+            with screenshot.open("rb") as f:
+                r2 = requests.put(
+                    f"{server}/{topic}",
+                    data=f.read(),
+                    headers={
+                        **headers,
+                        "Filename": screenshot.name,
+                        "Title": "Captcha screenshot",
+                    },
+                    timeout=15,
+                )
+                r2.raise_for_status()
+        log(f"Notif ntfy terkirim ke {server}/{topic}.")
+        return True
+    except requests.RequestException as e:
+        log(f"ntfy gagal: {e}")
+        return False
+
+
+def notify_discord(message: str, screenshot: Path | None) -> bool:
+    url = cfg("DISCORD_WEBHOOK_URL")
+    if not url:
+        return False
+    try:
+        if screenshot and screenshot.is_file():
+            with screenshot.open("rb") as f:
+                r = requests.post(
+                    url,
+                    data={"content": message},
+                    files={"file": (screenshot.name, f, "image/png")},
+                    timeout=15,
+                )
+        else:
+            r = requests.post(url, json={"content": message}, timeout=10)
+        r.raise_for_status()
+        log("Notif Discord terkirim.")
+        return True
+    except requests.RequestException as e:
+        log(f"Discord gagal: {e}")
+        return False
+
+
+def notify_slack(message: str, screenshot: Path | None) -> bool:
+    url = cfg("SLACK_WEBHOOK_URL")
+    if not url:
+        return False
+    try:
+        # Slack incoming-webhook gak support file upload — cuma text. URL noVNC
+        # masuk ke message body.
+        r = requests.post(url, json={"text": message}, timeout=10)
+        r.raise_for_status()
+        log("Notif Slack terkirim.")
+        return True
+    except requests.RequestException as e:
+        log(f"Slack gagal: {e}")
+        return False
+
+
+def notify_email(message: str, screenshot: Path | None) -> bool:
+    host = cfg("SMTP_HOST")
+    if not host:
+        return False
+    port = int(cfg("SMTP_PORT", "587"))
+    user = cfg("SMTP_USER")
+    password = cfg("SMTP_PASS")
+    sender = cfg("SMTP_FROM", user)
+    recipients = [a.strip() for a in cfg("SMTP_TO").split(",") if a.strip()]
+    if not (sender and recipients):
+        return False
+    msg = EmailMessage()
+    msg["From"] = sender
+    msg["To"] = ", ".join(recipients)
+    msg["Subject"] = "[Captcha Takeover] Captcha terdeteksi"
+    msg.set_content(message)
+    if screenshot and screenshot.is_file():
+        with screenshot.open("rb") as f:
+            msg.add_attachment(
+                f.read(),
+                maintype="image",
+                subtype="png",
+                filename=screenshot.name,
+            )
+    try:
+        if port == 465:
+            srv = smtplib.SMTP_SSL(host, port, timeout=15)
+        else:
+            srv = smtplib.SMTP(host, port, timeout=15)
+            srv.ehlo()
+            try:
+                srv.starttls()
+                srv.ehlo()
+            except smtplib.SMTPException:
+                pass  # plaintext SMTP server
+        if user and password:
+            srv.login(user, password)
+        srv.send_message(msg)
+        srv.quit()
+        log(f"Notif email terkirim ke {len(recipients)} alamat.")
+        return True
+    except (smtplib.SMTPException, OSError) as e:
+        log(f"Email gagal: {e}")
+        return False
+
+
+def dispatch(message: str, screenshot: Path | None) -> None:
+    """Dispatch ke semua channel yg di-set. Selalu append ke event log."""
+    append_event(message, screenshot)
+    sent_any = False
+    for fn in (notify_telegram, notify_ntfy, notify_discord, notify_slack, notify_email):
+        if fn(message, screenshot):
+            sent_any = True
+    if not sent_any:
+        log(
+            "Belum ada notif channel di-set (Telegram/ntfy/Discord/Slack/email) — "
+            f"event ditulis ke {EVENT_LOG}"
+        )
+
+
+# -- CDP polling ------------------------------------------------------------
 
 
 async def evaluate_in_tab(ws_url: str, expression: str) -> str:
-    """Kirim Runtime.evaluate via CDP websocket, return string result."""
+    """Kirim Runtime.evaluate via CDP websocket, return string result (or '')."""
     try:
         async with websockets.connect(ws_url, max_size=2**20, open_timeout=3, close_timeout=2) as ws:
             payload = {
@@ -217,12 +386,12 @@ async def evaluate_in_tab(ws_url: str, expression: str) -> str:
                 "params": {"expression": expression, "returnByValue": True},
             }
             await ws.send(json.dumps(payload))
-            # Tunggu pesan dengan id=1 (skip event lain)
             for _ in range(20):
                 raw = await asyncio.wait_for(ws.recv(), timeout=3)
                 msg = json.loads(raw)
                 if msg.get("id") == 1:
-                    return msg.get("result", {}).get("result", {}).get("value", "") or ""
+                    val = msg.get("result", {}).get("result", {}).get("value")
+                    return val if isinstance(val, str) else ""
             return ""
     except Exception:
         return ""
@@ -237,11 +406,9 @@ async def list_pages() -> list[dict]:
         return []
 
 
-def build_message(selector: str, page_url: str) -> str:
-    msg = f"Captcha terdeteksi di Hermes browser!\nSelector: {selector}\nPage: {page_url}"
-    ts_ip = get_tailscale_ip()
-    if ts_ip:
-        msg += f"\n\nVNC takeover: http://{ts_ip}:{NOVNC_PORT}/vnc.html?autoconnect=1&resize=remote"
+def build_message(detection: str, page_url: str) -> str:
+    msg = f"Captcha terdeteksi di Hermes/agent browser!\nDetection: {detection}\nPage: {page_url}"
+    msg += f"\n\nVNC takeover: {get_takeover_url()}"
     return msg
 
 
@@ -263,7 +430,6 @@ async def main() -> None:
             pass
 
     while not stop.is_set():
-        # Cek CDP up
         pages = await list_pages()
         if not pages:
             try:
@@ -283,9 +449,9 @@ async def main() -> None:
             sel = await evaluate_in_tab(page["webSocketDebuggerUrl"], DETECT_JS)
             if sel:
                 page_url = page.get("url", "")
-                log(f"DETECTED captcha (selector={sel}) di {page_url}")
+                log(f"DETECTED captcha ({sel}) di {page_url}")
                 shot = take_screenshot()
-                send_telegram(build_message(sel, page_url), shot)
+                dispatch(build_message(sel, page_url), shot)
                 last_notif = time.time()
                 break
 

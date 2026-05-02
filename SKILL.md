@@ -103,28 +103,26 @@ See `examples/` for full code per framework.
 
 **Step 2 — Detect CAPTCHA.**
 
-Run the bundled detector inside any page after navigation:
+Load and run the bundled detector inside any page after navigation:
 
 ```js
-// scripts/detect-captcha.js — drop into your evaluate() call
-(() => {
-  const sels = [
-    'iframe[src*="recaptcha"]',
-    'iframe[src*="hcaptcha"]',
-    'div[class*="cf-turnstile"]',
-    'div.g-recaptcha',
-    'div.h-captcha',
-    '#challenge-form',                 // Cloudflare interstitial
-    'iframe[title*="captcha" i]',
-    'iframe[title*="challenge" i]',
-  ];
-  for (const s of sels) if (document.querySelector(s)) return s;
-  return null;
-})();
+// Read scripts/detect-captcha.js as a string, then in your framework:
+//   Playwright: await page.evaluate(detectJsString)
+//   Puppeteer:  await page.evaluate(detectJsString)
+//   Selenium:   driver.execute_script("return " + detectJsString)
+//   Raw CDP:    {"method":"Runtime.evaluate", "params":{"expression": detectJsString, "returnByValue": true}}
 ```
 
-If it returns a non-empty string, you have a CAPTCHA. The exact same logic
-runs in `scripts/captcha-watcher.py` if you want background polling instead.
+It returns `"<vendor>:<selector>"` when a CAPTCHA is on screen, `null`
+otherwise. Vendors covered: **reCAPTCHA, hCaptcha, Cloudflare Turnstile +
+interstitial, Arkose / FunCaptcha, GeeTest, DataDome, PerimeterX / HUMAN,
+Akamai Bot Manager, Imperva (Incapsula), Kasada, AWS WAF, Lemin**, plus a
+generic iframe fallback and a text-heuristic for "Verify you are human" /
+"Just a moment…" pages. Add new selectors to the bottom of the file when you
+find a vendor it misses.
+
+The exact same detector runs in `scripts/captcha-watcher.py` if you want
+background polling instead.
 
 **Step 3 — Hand control to the user.**
 
@@ -164,9 +162,19 @@ watch Chrome), enable the watcher:
 ./watch-captcha.sh start    # background process, polls Chrome every 5 s
 ```
 
-It writes every detection to `~/.hermes-takeover/logs/captcha-events.log` and,
-if `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` are set in `scripts/env.sh`,
-sends a screenshot + the takeover URL to the user's Telegram.
+It writes every detection to `~/.hermes-takeover/logs/captcha-events.log` and
+fans out to whichever channels are configured in `scripts/env.sh`:
+
+| Channel | Variables to set |
+|---------|------------------|
+| Telegram | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` |
+| ntfy.sh | `NTFY_TOPIC` (and optionally `NTFY_SERVER`, `NTFY_TOKEN`) |
+| Discord | `DISCORD_WEBHOOK_URL` |
+| Slack | `SLACK_WEBHOOK_URL` |
+| Email (SMTP) | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `SMTP_TO` |
+
+Multiple channels can be set at once; all of them get the same notification.
+If none are set, events still go to the local log file.
 
 ## Limitations
 
@@ -177,10 +185,14 @@ sends a screenshot + the takeover URL to the user's Telegram.
 - Default bind is `auto` (Tailscale IP if up, else 127.0.0.1). Avoid
   `0.0.0.0` unless you need public exposure (use Cloudflare Tunnel + Access
   for that — out of scope for this skill).
-- One Chrome instance per machine. To run multiple agents on the same VPS,
-  duplicate the install dir with a different `RUN_DIR` and ports in `env.sh`.
+- One Chrome instance per install dir. Use `./new-instance.sh <name> <port-offset>`
+  to spawn additional isolated instances (each gets its own `RUN_DIR`,
+  Chrome profile, X display, and port set).
+- A built-in watchdog auto-restarts Chrome if it crashes mid-session.
+  Disable with `START_WATCHDOG=0 ./start.sh`.
 
 ## See also
 
-- `README.md` — human-facing setup walkthrough (Indonesian).
+- `README.md` — human-facing setup walkthrough (Bahasa Indonesia).
+- `README.en.md` — same walkthrough in English.
 - `examples/` — copy-paste integration code for each framework.

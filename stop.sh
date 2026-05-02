@@ -11,8 +11,9 @@ ENV_FILE="$SCRIPT_DIR/scripts/env.sh"
 # shellcheck disable=SC1090
 . "$ENV_FILE"
 
-# Stop dalam urutan terbalik dari start
-for name in websockify x11vnc chrome fluxbox xvfb; do
+# Stop dalam urutan terbalik dari start. Watchdog dulu biar gak ke-trigger
+# restart-on-Chrome-down pas kita lagi kill Chrome.
+for name in watchdog websockify x11vnc chrome fluxbox xvfb; do
   pidfile="$PID_DIR/$name.pid"
   if [[ -f "$pidfile" ]]; then
     pid="$(cat "$pidfile" 2>/dev/null || true)"

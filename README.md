@@ -1,8 +1,12 @@
-# Hermes Captcha Takeover Stack
+# Captcha Takeover Skill
 
-Setup biar lu bisa **takeover captcha dari HP** padahal Hermes Agent jalan di
-VPS Ubuntu. Pas captcha muncul, Hermes biasanya stuck — lu tinggal buka URL di
-Chrome HP, klik captcha, agent lanjut.
+Setup biar lu bisa **takeover captcha dari HP** padahal agent (Hermes,
+Playwright, Puppeteer, Selenium, dll) jalan di VPS Ubuntu. Pas captcha muncul,
+agent biasanya stuck — lu tinggal buka URL di Chrome HP, klik captcha, agent
+lanjut.
+
+> English version: see [README.en.md](./README.en.md). Agent integration
+> playbook: see [SKILL.md](./SKILL.md).
 
 ## Quick Test (5 menit di VPS)
 
@@ -32,9 +36,10 @@ Selesai. Pas captcha muncul → buka URL noVNC di HP → klik captcha pake jari 
 
 **Helper scripts:**
 - `./doctor.sh` — diagnose dependency / port / health issue
-- `./hermes-info.sh` — re-print URL noVNC + command Hermes
+- `./info.sh` — re-print URL noVNC + connect command (`--json` untuk machine-readable output)
 - `./status.sh` — cek semua komponen UP/OFF
 - `./stop.sh` / `./start.sh` — restart cycle
+- `./new-instance.sh <nama> <port-offset>` — bikin instance baru buat agent kedua/ketiga
 
 ## Cara kerja
 
@@ -146,7 +151,42 @@ liat live di HP**.
 3. Pakai jari, klik checkbox / solve captcha kayak biasa
 4. Begitu captcha kelar, Hermes auto lanjut karena dia connect ke Chrome yang sama
 
-## (Opsional) Notif Telegram saat captcha muncul
+## (Opsional) Notif kalau captcha muncul
+
+Watcher bisa kirim ke **Telegram, ntfy.sh, Discord, Slack, atau email** —
+semua optional, set yg mau dipake aja di `scripts/env.sh`.
+
+### ntfy.sh — paling simple, gak perlu bot/token
+
+1. Install app **ntfy** di HP (Play Store / App Store)
+2. Subscribe ke topic random unik (misal `hermes-beyah-x9k3pm`)
+3. Edit `scripts/env.sh`: `export NTFY_TOPIC="hermes-beyah-x9k3pm"`
+
+### Discord
+
+1. Server Settings → Integrations → Webhooks → New Webhook
+2. Copy webhook URL
+3. Edit `scripts/env.sh`: `export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."`
+
+### Slack
+
+1. Bikin Incoming Webhook di workspace Slack lu
+2. Edit `scripts/env.sh`: `export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."`
+
+### Email (SMTP)
+
+Buat Gmail: bikin App Password di https://myaccount.google.com/apppasswords lalu
+edit `scripts/env.sh`:
+
+```bash
+export SMTP_HOST="smtp.gmail.com"
+export SMTP_PORT="587"
+export SMTP_USER="lu@gmail.com"
+export SMTP_PASS="<app-password>"
+export SMTP_TO="lu@gmail.com"
+```
+
+### Telegram
 
 ### 1. Bikin bot
 
