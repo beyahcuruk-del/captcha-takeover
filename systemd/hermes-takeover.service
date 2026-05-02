@@ -1,0 +1,21 @@
+[Unit]
+Description=Hermes captcha takeover stack (Xvfb + Chrome CDP + noVNC)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=forking
+# Ganti USER ke username di VPS lu (e.g. ubuntu, root, dll)
+User=USER
+Group=USER
+# Sesuaikan path absolut ke folder hermes-takeover di VPS lu:
+Environment=HOME=/home/USER
+WorkingDirectory=/home/USER/hermes-takeover
+ExecStart=/home/USER/hermes-takeover/start.sh
+ExecStop=/home/USER/hermes-takeover/stop.sh
+Restart=on-failure
+RestartSec=5
+# PIDFile gak dipake karena script kita banyak proses; pake Type=forking + ExecStop manual
+
+[Install]
+WantedBy=multi-user.target
