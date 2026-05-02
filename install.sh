@@ -178,7 +178,7 @@ echo "       $INSTALL_DIR/start.sh"
 echo "     Output bakal kasih: URL noVNC + password + command Hermes connect."
 echo
 echo "  4. (Kapan aja) Re-print info connection:"
-echo "       $INSTALL_DIR/hermes-info.sh"
+echo "       $INSTALL_DIR/info.sh"
 echo
 echo "  5. Connect Hermes ke Chrome — di terminal Hermes:"
 echo "       hermes chat"
