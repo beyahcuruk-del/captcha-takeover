@@ -10,7 +10,7 @@ The agent runs in a VPS, you watch and click from your phone.
 
 > Bahasa Indonesia version: see [README.md](./README.md).
 
-## Quick start (5 minutes on your VPS)
+## Quick start (3 minutes on your VPS — cloudflared, no Tailscale)
 
 ```bash
 git clone https://github.com/beyahcuruk-del/captcha-takeover.git
@@ -18,20 +18,33 @@ cd captcha-takeover
 chmod +x *.sh scripts/*.sh
 ./install.sh
 
-# One-time: log into Tailscale (a free private VPN)
-sudo tailscale up
-# Install the "Tailscale" app on your phone, log in with the same account
+# Start the stack with a Cloudflare quick tunnel — instant public HTTPS URL
+TUNNEL_MODE=cloudflared ./start.sh
+# → prints a https://<random>.trycloudflare.com/vnc.html?... URL + the
+#   Chrome CDP URL ready to paste into your agent
 
-# Start the stack
-./start.sh
-# → outputs noVNC URL + Chrome CDP URL ready to paste into your agent
-
-# Open the noVNC URL on your phone's browser
+# Open the trycloudflare.com URL on your phone's browser
 ```
 
 In your agent, connect to Chrome over CDP at `http://127.0.0.1:9222`. When
 the agent hits a CAPTCHA, your phone is already showing the page — just tap
 through it and the agent continues.
+
+## Tunnel options — how your phone reaches noVNC
+
+By default noVNC binds to `127.0.0.1:6080`, which is only reachable from the
+VPS itself. To open it from a phone you need one of these:
+
+| Mode | How to start | URL the user gets | Privacy |
+|------|--------------|--------------------|---------|
+| **Cloudflared quick tunnel** ⚡ fastest | `TUNNEL_MODE=cloudflared ./start.sh` | `https://<random>.trycloudflare.com/...` | **Public** — anyone with the URL can connect; the VNC password is the only auth. Auto-rotates each restart. No account needed. |
+| **Tailscale** 🔒 most private | `sudo tailscale up` once + install Tailscale app on phone, then `./start.sh` | `http://100.x.y.z:6080/...` | **Private VPN** — only your own devices can reach it. |
+| **SSH local-forward** | `ssh -L 6080:127.0.0.1:6080 user@vps` and open `http://127.0.0.1:6080/...` on the laptop | localhost on laptop | Private, but laptop-only (won't work from phone over LTE) |
+| None | plain `./start.sh` (no flag) | `http://127.0.0.1:6080/...` | Local only |
+
+Recommendation:
+- **One-off / quick demo** → cloudflared quick tunnel
+- **Daily use** → Tailscale (more private, 2-minute one-time setup, then auto)
 
 ## Helper scripts
 

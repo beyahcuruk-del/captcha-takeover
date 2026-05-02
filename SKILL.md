@@ -60,19 +60,35 @@ to the user via noVNC over Tailscale.
 git clone https://github.com/beyahcuruk-del/captcha-takeover.git
 cd captcha-takeover
 chmod +x *.sh scripts/*.sh
-./install.sh                  # installs Xvfb, Chrome, x11vnc, noVNC, Tailscale, Python deps
-sudo tailscale up             # one-time login on this machine
-# Install Tailscale app on phone, sign in with the same account.
+./install.sh                  # installs Xvfb, Chrome, x11vnc, noVNC, Tailscale, cloudflared, Python deps
 ```
+
+## Tunnel options — how the user reaches noVNC from their phone
+
+noVNC binds to `127.0.0.1:6080` by default (only reachable from the VPS itself).
+To let the user open it from their phone you need a tunnel. Pick one:
+
+| Mode | Setup | URL the user gets | Privacy |
+|------|-------|-------------------|---------|
+| **Cloudflared quick tunnel** — recommended for fast setup | `TUNNEL_MODE=cloudflared ./start.sh` | `https://<random>.trycloudflare.com/...` | **Public** — anyone with the URL can connect (VNC password is the only auth). Auto-rotates each restart. No account, no domain, no login. |
+| **Tailscale** — recommended for long-term private use | `sudo tailscale up` once, install Tailscale app on phone with same account, then `./start.sh` | `http://100.x.y.z:6080/...` | **Private VPN** — only your own devices can reach it. |
+| **SSH local-forward** | `ssh -L 6080:127.0.0.1:6080 user@vps`, then open `http://127.0.0.1:6080/...` on the laptop | localhost on laptop | **Private**, but laptop-only (phone won't work over LTE). |
+| None | `./start.sh` (default, no flag) | `http://127.0.0.1:6080/...` | Local-only, only useful when agent + viewer share the same machine. |
 
 ## Start (per session)
 
 ```bash
+# Default — no public tunnel; uses Tailscale auto-detect if logged in:
 ./start.sh
+
+# OR with cloudflared quick tunnel (instant public HTTPS URL):
+TUNNEL_MODE=cloudflared ./start.sh
 ```
 
 Output prints the **noVNC URL with embedded password** + the **CDP URL** the
-agent should connect to.
+agent should connect to. If `TUNNEL_MODE=cloudflared`, an additional public
+`https://<random>.trycloudflare.com/vnc.html?...` URL is printed and written to
+`~/.hermes-takeover/tunnel-url.txt` and `info.json` (`tunnel_novnc_url`).
 
 ## Stop / status / diagnose
 
@@ -134,8 +150,10 @@ When CAPTCHA is detected, your agent should:
    ```bash
    ./info.sh --json
    ```
-   or read `~/.hermes-takeover/info.json` (keys: `novnc_url`, `vnc_password`,
-   `cdp_url`, `tailscale_ip`).
+   or read `~/.hermes-takeover/info.json`. Use this priority order:
+   1. `tunnel_novnc_url` if non-empty (cloudflared public HTTPS URL — works
+      from any device, anywhere).
+   2. Otherwise `novnc_url` (Tailscale or localhost, depending on `BIND_ADDR`).
 3. **Tell the user** with a message like:
    ```
    I hit a CAPTCHA on <PAGE_URL>. Open this from your phone and solve it for
@@ -182,9 +200,15 @@ If none are set, events still go to the local log file.
   has to actually solve it.
 - Chrome runs headed under Xvfb — no GPU, so heavily-animated sites may feel
   slow over mobile networks.
-- Default bind is `auto` (Tailscale IP if up, else 127.0.0.1). Avoid
-  `0.0.0.0` unless you need public exposure (use Cloudflare Tunnel + Access
-  for that — out of scope for this skill).
+- Default bind is `auto` (Tailscale IP if up, else 127.0.0.1). For public
+  access prefer `TUNNEL_MODE=cloudflared` over manually setting
+  `BIND_ADDR=0.0.0.0`; cloudflared adds HTTPS for free and avoids exposing the
+  raw port.
+- Cloudflared quick tunnels are public + anonymous — the VNC password is the
+  only auth boundary. The password is auto-generated at install time and
+  stored in `~/.hermes-takeover/vncpasswd.txt`; rotate it (and re-run
+  install/start) if it leaks. URLs rotate each restart; no uptime SLA from
+  Cloudflare for the free quick-tunnel mode.
 - One Chrome instance per install dir. Use `./new-instance.sh <name> <port-offset>`
   to spawn additional isolated instances (each gets its own `RUN_DIR`,
   Chrome profile, X display, and port set).

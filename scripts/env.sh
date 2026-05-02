@@ -6,7 +6,7 @@ export DISPLAY_NUM=":1"
 export SCREEN_GEOMETRY="1280x800x24"
 
 # Port-port (bind ke 127.0.0.1 / Tailscale aja, jangan public)
-export VNC_PORT="5901"
+export VNC_PORT="5903"
 export NOVNC_PORT="6080"
 export CHROME_CDP_PORT="9222"
 
@@ -21,6 +21,16 @@ export PID_DIR="$RUN_DIR/run"
 # Dengan default ini, akses dari HP via Tailscale tetep works karena Tailscale sshuttle ke loopback.
 # Kalau gak works, ganti ke "0.0.0.0" (kurang aman) atau IP tailscale spesifik.
 export BIND_ADDR="auto"
+
+# =====================================================================
+# Tunnel mode (pilih cara akses noVNC dari HP):
+#   ""           = no tunnel (cuma localhost / Tailscale auto-detect via BIND_ADDR=auto)
+#   "cloudflared" = spawn Cloudflare quick tunnel (https://*.trycloudflare.com)
+#                   PUBLIK — siapa aja yg punya URL bisa akses; password VNC jadi auth
+# Bisa di-override saat start: TUNNEL_MODE=cloudflared ./start.sh
+# =====================================================================
+# Pakai `${VAR:-default}` biar bisa di-override saat invocation tanpa kena overwrite.
+export TUNNEL_MODE="${TUNNEL_MODE:-}"
 
 # Path ke binary Chrome. Default: pake binary asli google-chrome-stable.
 # Di sebagian environment (termasuk container Devin) ada wrapper "google-chrome"

@@ -100,7 +100,7 @@ echo
 
 # 5. Components running
 printf "${BOLD}[5] Component processes${NC}\n"
-for name in xvfb fluxbox chrome x11vnc websockify watchdog; do
+for name in xvfb fluxbox chrome x11vnc websockify watchdog cloudflared; do
   pidfile="$PID_DIR/$name.pid"
   if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile" 2>/dev/null)" 2>/dev/null; then
     ok "$name running (PID $(cat "$pidfile"))"

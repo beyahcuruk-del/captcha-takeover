@@ -27,6 +27,13 @@ fi
 TS_IP="$(tailscale ip -4 2>/dev/null | head -1 || echo "")"
 TS_STATE="$(tailscale status --json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("BackendState","Unknown"))' 2>/dev/null || echo "Unknown")"
 VNC_PASS="$(cat "${VNC_PASSWD_FILE}.txt" 2>/dev/null || cat "$RUN_DIR/vncpasswd.txt" 2>/dev/null || echo "(cek $RUN_DIR/vncpasswd.txt)")"
+TUNNEL_URL="$(cat "$RUN_DIR/tunnel-url.txt" 2>/dev/null || echo "")"
+# Derive tunnel_mode dari presence URL (lebih reliable daripada env var dari shell)
+if [[ -n "$TUNNEL_URL" ]]; then
+  TUNNEL_MODE_ACTUAL="cloudflared"
+else
+  TUNNEL_MODE_ACTUAL="${TUNNEL_MODE:-}"
+fi
 
 # Pilih host buat URL: prefer Tailscale IP kalau ada, fallback BIND_ADDR
 if [[ -n "$TS_IP" ]]; then
@@ -43,6 +50,14 @@ fi
 
 NOVNC_URL_AUTH="http://${HOST}:${NOVNC_PORT}/vnc.html?autoconnect=1&resize=remote&password=${VNC_PASS}"
 NOVNC_URL_PROMPT="http://${HOST}:${NOVNC_PORT}/vnc.html?autoconnect=1&resize=remote"
+
+# Cloudflared quick tunnel — publik HTTPS URL kalau aktif
+TUNNEL_URL_AUTH=""
+TUNNEL_URL_PROMPT=""
+if [[ -n "$TUNNEL_URL" ]]; then
+  TUNNEL_URL_AUTH="${TUNNEL_URL}/vnc.html?autoconnect=1&resize=remote&password=${VNC_PASS}"
+  TUNNEL_URL_PROMPT="${TUNNEL_URL}/vnc.html?autoconnect=1&resize=remote"
+fi
 CDP_HTTP="http://127.0.0.1:${CHROME_CDP_PORT}"
 CDP_ADDR="127.0.0.1:${CHROME_CDP_PORT}"
 CDP_WS="ws://127.0.0.1:${CHROME_CDP_PORT}"
@@ -62,7 +77,11 @@ cat > "$INFO_JSON" <<EOF
   "tailscale_ip": "$TS_IP",
   "tailscale_state": "$TS_STATE",
   "bind_addr": "$BIND_ADDR",
-  "host_for_remote_access": "$HOST"
+  "host_for_remote_access": "$HOST",
+  "tunnel_mode": "$TUNNEL_MODE_ACTUAL",
+  "tunnel_url": "$TUNNEL_URL",
+  "tunnel_novnc_url": "$TUNNEL_URL_AUTH",
+  "tunnel_novnc_url_no_password": "$TUNNEL_URL_PROMPT"
 }
 EOF
 chmod 600 "$INFO_JSON"
@@ -89,6 +108,11 @@ printf "   ${GREEN}%s${NC}\n\n" "$NOVNC_URL_AUTH"
 printf "   (atau tanpa auto-password buat lebih aman):\n"
 printf "   ${GREEN}%s${NC}\n" "$NOVNC_URL_PROMPT"
 printf "   ${BOLD}VNC password:${NC} ${YELLOW}%s${NC}\n\n" "$VNC_PASS"
+
+if [[ -n "$TUNNEL_URL" ]]; then
+  printf "${BOLD}2b) Cloudflared quick tunnel${NC} (${YELLOW}PUBLIK${NC} — siapa aja yg punya URL bisa akses, password VNC = auth):\n"
+  printf "   ${GREEN}%s${NC}\n\n" "$TUNNEL_URL_AUTH"
+fi
 
 printf "${BOLD}3) Workflow takeover captcha:${NC}\n"
 printf "   - Hermes navigate ke website biasa\n"

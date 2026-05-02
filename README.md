@@ -8,31 +8,43 @@ lanjut.
 > English version: see [README.en.md](./README.en.md). Agent integration
 > playbook: see [SKILL.md](./SKILL.md).
 
-## Quick Test (5 menit di VPS)
+## Quick Test (3 menit di VPS — pake cloudflared, tanpa Tailscale)
 
 ```bash
-# 1. Upload + unzip
-unzip hermes-takeover.zip && cd hermes-takeover
-
-# 2. Install semua deps (Xvfb, Chrome, Tailscale, dll)
+# 1. Clone + install
+git clone https://github.com/beyahcuruk-del/captcha-takeover.git
+cd captcha-takeover
 chmod +x *.sh scripts/*.sh
 ./install.sh
 
-# 3. Login Tailscale (sekali aja, buka URL yang muncul di HP/laptop)
-sudo tailscale up
-# Install app "Tailscale" di HP, login akun Google yg sama, aktifin
+# 2. Start stack dgn cloudflared quick tunnel — dapet URL publik HTTPS instant
+TUNNEL_MODE=cloudflared ./start.sh
 
-# 4. Start stack — output langsung kasih URL noVNC + Hermes connect command
-./start.sh
+# 3. Output kasih URL kayak gini → buka di Chrome HP:
+#    https://<random>.trycloudflare.com/vnc.html?autoconnect=1&resize=remote&password=...
 
-# 5. Buka URL noVNC dari output di atas, di Chrome HP
-
-# 6. Connect Hermes ke Chrome (di terminal Hermes):
+# 4. Connect Hermes ke Chrome (di terminal Hermes):
 hermes chat
 # di prompt:  /browser connect ws://127.0.0.1:9222
 ```
 
-Selesai. Pas captcha muncul → buka URL noVNC di HP → klik captcha pake jari → agent lanjut.
+Selesai. Pas captcha muncul → buka URL `trycloudflare.com` di HP → klik captcha pake jari → agent lanjut.
+
+## Pilihan tunnel (cara HP lu nyampe ke noVNC)
+
+Default-nya noVNC bind ke `127.0.0.1:6080` (cuma localhost VPS). Buat akses
+dari HP, pilih salah satu:
+
+| Mode | Cara start | URL yg muncul | Privat? |
+|------|------------|----------------|---------|
+| **Cloudflared quick tunnel** ⚡ paling cepet | `TUNNEL_MODE=cloudflared ./start.sh` | `https://<random>.trycloudflare.com/...` | **Publik** — siapa aja yg punya URL bisa akses; password VNC = auth. Auto-rotate tiap restart. Gak perlu account. |
+| **Tailscale** 🔒 paling aman | `sudo tailscale up` (sekali) + install app di HP, lalu `./start.sh` | `http://100.x.y.z:6080/...` | **Privat VPN** — cuma device lu. |
+| **SSH local-forward** | `ssh -L 6080:127.0.0.1:6080 user@vps`, buka `http://127.0.0.1:6080/...` di laptop | localhost laptop | Privat tapi cuma works dari laptop, gak dari HP via LTE |
+| Tanpa tunnel | `./start.sh` doang | `http://127.0.0.1:6080/...` | Cuma kalo lu pake VPS-nya langsung |
+
+Rekomendasi:
+- **Mau cepet, sekali pake** → cloudflared quick tunnel
+- **Pemakaian rutin** → Tailscale (lebih aman, setup awal 2 menit, abis itu auto)
 
 **Helper scripts:**
 - `./doctor.sh` — diagnose dependency / port / health issue
